@@ -54,6 +54,9 @@
     "parcel-bundler": "^1.12.4",
     "parcel-plugin-static-files-copy": "^2.2.1"
   },
+  "optionalDependencies": {
+    "acl-encoder": "file:../../acl-encoder"
+  },
   "staticFiles": {
     "staticPath": [
       {
