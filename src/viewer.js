@@ -20,6 +20,18 @@ import {
   Vector3,
   WebGLRenderer,
   sRGBEncoding,
+  // nfrechette - BEGIN
+  PropertyBinding,
+  ZeroCurvatureEnding,
+  InterpolateLinear,
+  InterpolateSmooth,
+  InterpolateDiscrete,
+  LinearInterpolant,
+  DiscreteInterpolant,
+  CubicInterpolant,
+  QuaternionLinearInterpolant,
+  GLTFCubicSplineInterpolant,
+  // nfrechette - END
 } from 'three';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -32,6 +44,10 @@ import { GUI } from 'dat.gui';
 
 import { environments } from '../assets/environment/index.js';
 import { createBackground } from '../lib/three-vignette.js';
+
+// nfrechette - BEGIN
+import { TrackArray, SampleTypes, QVV, RoundingPolicy } from 'acl-encoder';
+// nfrechette - END
 
 const DEFAULT_CAMERA = '[default]';
 
@@ -77,6 +93,8 @@ export class Viewer {
       wireframe: false,
       skeleton: false,
       grid: false,
+
+      animSource: 'Source File', // nfrechette
 
       // Lights
       addLights: true,
@@ -332,7 +350,7 @@ export class Viewer {
   }
 
   printGraph (node) {
-
+    return // nfrechette
     console.group(' <' + node.type + '> ' + node.name);
     node.children.forEach((child) => this.printGraph(child));
     console.groupEnd();
@@ -353,7 +371,319 @@ export class Viewer {
     if (!clips.length) return;
 
     this.mixer = new AnimationMixer( this.content );
+
+    this.compressWithACL(clips) // nfrechette
   }
+
+  // nfrechette - BEGIN
+  findClipDuration ( clip ) {
+    const numClipTracks = clip.tracks.length
+    let maxDuration = 0.0
+    let maxNumSamples = 0
+    for (let trackIndex = 0; trackIndex < numClipTracks; ++trackIndex) {
+      const timeValues = clip.tracks[trackIndex].times
+      const numSamples = timeValues.length
+      if (numSamples > 0) {
+        const lastSampleTime = timeValues[numSamples - 1]
+        maxDuration = Math.max(maxDuration, lastSampleTime)
+        maxNumSamples = Math.max(maxNumSamples, numSamples)
+      }
+    }
+
+    if (maxNumSamples === 0) {
+      return 0.0  // No samples means we have no duration
+    }
+
+    if (maxNumSamples === 1) {
+      return Number.POSITIVE_INFINITY // A single sample means we have an indefinite duration (static pose)
+    }
+
+    // Use the value of our last sample time
+    return maxDuration
+  }
+
+  calcNumSamples ( duration, sampleRate ) {
+    if (duration === 0.0) {
+      return 0  // No duration whatsoever, we have no samples
+    }
+
+    if (duration === Number.POSITIVE_INFINITY) {
+      return 1  // An infinite duration, we have a single sample (static pose)
+    }
+
+    // Otherwise we have at least 1 sample
+    return Math.floor((duration * sampleRate) + 0.5) + 1
+  }
+
+  findClipSampleRate ( clip, duration ) {
+    // If our clip has no samples, or a single sample, or samples which aren't spaced linearly,
+    // we will try and use a sample rate as close to 30 FPS as possible.
+    if (duration === 0.0 || duration === Number.POSITIVE_INFINITY) {
+      return 30.0
+    }
+
+    // First find the smallest amount of time between two samples, this is potentially
+    // our sample rate.
+    const numClipTracks = clip.tracks.length
+    let smallestDeltaTime = 1.0E10;
+    for (let trackIndex = 0; trackIndex < numClipTracks; ++trackIndex) {
+      const timeValues = clip.tracks[trackIndex].times
+      const numSamples = timeValues.length
+      for (let sampleIndex = 1; sampleIndex < numSamples; ++sampleIndex) {
+        const prevSampleTime = timeValues[sampleIndex - 1];
+        const currSampleTime = timeValues[sampleIndex];
+        const deltaTime = currSampleTime - prevSampleTime;
+        smallestDeltaTime = Math.min(smallestDeltaTime, deltaTime);
+      }
+    }
+
+    if (!Number.isFinite(smallestDeltaTime) || smallestDeltaTime < 0.0) {
+      throw new RangeError('Invalid data')
+    }
+
+    // If every sample is near a multiple of our sample rate, it is valid
+    let isSampleRateValid = true
+    for (let trackIndex = 0; trackIndex < numClipTracks; ++trackIndex) {
+      const timeValues = clip.tracks[trackIndex].times
+      const numSamples = timeValues.length
+      for (let sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
+        const sampleTime = timeValues[sampleIndex];
+        const remainder = sampleTime % smallestDeltaTime
+        if (remainder > 0.001) {
+          isSampleRateValid = false
+          break
+        }
+      }
+    }
+
+    if (isSampleRateValid) {
+      return 1.0 / smallestDeltaTime
+    }
+
+    // Our samples aren't linearly spaced, do our best to approximate something decent
+    const numSamples = this.calcNumSamples(duration, 30.0)
+    return (numSamples - 1.0) / duration
+  }
+
+  convertClipToACLTracks ( clip ) {
+    const interpolantSettings = {
+      endingStart: ZeroCurvatureEnding,
+      endingEnd: ZeroCurvatureEnding
+    };
+
+    const resultBuffer = new Float64Array(4)
+
+    // Find all nodes
+    const nodes = {}
+    this.content.traverse(node => nodes[node.uuid] = node)
+    const nodeUUIDs = Object.keys(nodes)
+    const numTracks = nodeUUIDs.length
+
+    // Find the props that have data
+    const propsWithData = {}
+    for (let trackIndex = 0; trackIndex < clip.tracks.length; ++trackIndex) {
+      const track = clip.tracks[trackIndex]
+      const parsedPath = false
+      const prop = PropertyBinding.create(this.content, track.name, parsedPath)
+      prop.track = track
+
+      if (!propsWithData[prop.node.uuid]) {
+        propsWithData[prop.node.uuid] = []
+      }
+      propsWithData[prop.node.uuid].push(prop)
+    }
+
+    const duration = this.findClipDuration(clip)
+    const sampleRate = this.findClipSampleRate(clip, duration)
+    const numSamplesPerTrack = this.calcNumSamples(duration, sampleRate)
+
+    const tracks = new TrackArray(numTracks, SampleTypes.QVV, numSamplesPerTrack, sampleRate);
+
+    // TODO: Display this in the viewport?
+    console.log(`num tracks: ${tracks.numTracks}`)
+    console.log(`sample rate: ${tracks.sampleRate}`)
+    console.log(`num samples per track: ${tracks.numSamplesPerTrack}`)
+    console.log(`duration: ${tracks.duration}`)
+
+    // Populate our data
+    for (let trackIndex = 0; trackIndex < numTracks; ++trackIndex) {
+      const nodeUUID = nodeUUIDs[trackIndex]
+      const node = nodes[nodeUUID]
+
+      const track = tracks.at(trackIndex)
+
+      // Setup our description
+      if (node.parent) {
+        track.description.parentIndex = nodeUUIDs.indexOf(node.parent.uuid)
+      }
+
+      const qvv = QVV.identity
+      if (node.quaternion) {
+        qvv.rotation.x = node.quaternion.x
+        qvv.rotation.y = node.quaternion.y
+        qvv.rotation.z = node.quaternion.z
+        qvv.rotation.w = node.quaternion.w
+      }
+      if (node.translation) {
+        qvv.translation.x = node.translation.x
+        qvv.translation.y = node.translation.y
+        qvv.translation.z = node.translation.z
+      }
+      if (node.scale) {
+        qvv.scale.x = node.scale.x
+        qvv.scale.y = node.scale.y
+        qvv.scale.z = node.scale.z
+      }
+
+      // Write the bind pose to every sample
+      for (let sampleIndex = 0; sampleIndex < numSamplesPerTrack; ++sampleIndex) {
+        const sample = track.at(sampleIndex)
+        sample.setQVV(qvv)
+      }
+
+      const props = propsWithData[nodeUUID]
+      const numAnimatedProps = props ? props.length : 0
+      for (let propIndex = 0; propIndex < numAnimatedProps; ++propIndex) {
+        const prop = props[propIndex]
+        const propertyName = prop.parsedPath.propertyName
+
+        // Add metadata to indicate which
+        prop.track.aclTrackIndex = trackIndex
+        prop.track.propertyName = propertyName
+
+        // This track is animated, read the data
+        const interpolant = prop.track.createInterpolant(null)
+        interpolant.settings = interpolantSettings
+        interpolant.resultBuffer = resultBuffer
+
+        for (let sampleIndex = 0; sampleIndex < numSamplesPerTrack; ++sampleIndex) {
+          const sampleTime = Math.min(sampleIndex / sampleRate, duration);
+          interpolant.evaluate(sampleTime)
+
+          const sample = track.at(sampleIndex)
+          sample.getQVV(qvv)
+
+          if (propertyName === 'quaternion') {
+            qvv.rotation.x = resultBuffer[0]
+            qvv.rotation.y = resultBuffer[1]
+            qvv.rotation.z = resultBuffer[2]
+            qvv.rotation.w = resultBuffer[3]
+          }
+          else if (propertyName === 'position') {
+            qvv.translation.x = resultBuffer[0]
+            qvv.translation.y = resultBuffer[1]
+            qvv.translation.z = resultBuffer[2]
+          }
+          else if (propertyName === 'scale') {
+            qvv.scale.x = resultBuffer[0]
+            qvv.scale.y = resultBuffer[1]
+            qvv.scale.z = resultBuffer[2]
+          }
+
+          sample.setQVV(qvv)
+        }
+      }
+    }
+
+    return tracks
+  }
+
+  bindACLProxy ( clip ) {
+    class ACLInterpolant {
+      constructor(aclTracks, track, result) {
+        this.aclTracks = aclTracks
+        this.aclTrackIndex = track.aclTrackIndex
+        this.propertyName = track.propertyName
+        this.track = track
+        this.resultBuffer = result
+      }
+
+      evaluate(t) {
+        const transform = this.aclTracks.sampleTrack(this.aclTrackIndex, t, RoundingPolicy.Nearest)
+
+        if (this.propertyName === 'quaternion') {
+          this.resultBuffer[0] = transform.rotation.x
+          this.resultBuffer[1] = transform.rotation.y
+          this.resultBuffer[2] = transform.rotation.z
+          this.resultBuffer[3] = transform.rotation.w
+        }
+        else if (this.propertyName === 'position') {
+          this.resultBuffer[0] = transform.translation.x
+          this.resultBuffer[1] = transform.translation.y
+          this.resultBuffer[2] = transform.translation.z
+        }
+        else if (this.propertyName === 'scale') {
+          this.resultBuffer[0] = transform.scale.x
+          this.resultBuffer[1] = transform.scale.y
+          this.resultBuffer[2] = transform.scale.z
+        }
+
+        return this.resultBuffer
+      }
+    }
+
+    clip.tracks.forEach((track) => {
+      track.createInterpolantRef = track.createInterpolant
+      track.createInterpolantACLRaw = function (result) {
+        return new ACLInterpolant(clip.aclTracks, track, result)
+      }
+    })
+  }
+
+  compressWithACL ( clips ) {
+    console.time('acl::compress')
+
+    clips.forEach((clip) => {
+      // Cache our original tracks and convert them to ACL tracks
+      clip.refTracks = clip.tracks
+      clip.aclTracks = this.convertClipToACLTracks(clip)
+
+      // Bind our clip to playback from ACL tracks
+      this.bindACLProxy(clip)
+    })
+
+    console.timeEnd('acl::compress')
+
+    this.updateAnimationSource()
+  }
+
+  updateAnimationSource () {
+    console.log(`Changing animation source to: ${this.state.animSource}`)
+
+    // Replace the track interpolant with the one we need
+    this.clips.forEach((clip) => {
+      clip.tracks.forEach((track) => {
+        if (this.state.animSource === 'Source File') {
+          track.createInterpolant = track.createInterpolantRef
+        }
+        else if (this.state.animSource === 'ACL Raw') {
+          track.createInterpolant = track.createInterpolantACLRaw
+        }
+        else if (this.state.animSource === 'ACL Compressed') {
+          track.createInterpolant = null
+        }
+      })
+
+      // Remove any stale data from the mixer
+      this.mixer.uncacheClip(clip)
+
+      // Restart playback if we were playing
+      if (this.state.actionStates[clip.name]) {
+        const action = this.mixer.clipAction(clip);
+        action.play();
+      }
+
+      // Measure perf
+      const dt = 1.0 / 30.0
+      console.time('playback')
+      for (let i = 0; i < 1000; ++i) {
+        this.mixer.update(dt)
+      }
+      console.timeEnd('playback')
+      this.mixer.setTime(0.0)
+    })
+  }
+  // nfrechette - END
 
   playAllClips () {
     this.clips.forEach((clip) => {
@@ -600,6 +930,11 @@ export class Viewer {
       if (this.mixer) this.mixer.timeScale = speed;
     });
     this.animFolder.add({playAll: () => this.playAllClips()}, 'playAll');
+
+    // nfrechette - BEGIN
+    const animSourceCtrl = this.animFolder.add(this.state, 'animSource', ['Source File', 'ACL Raw', 'ACL Compressed']);
+    animSourceCtrl.onChange(() => this.updateAnimationSource());
+    // nfrechette - END
 
     // Morph target controls.
     this.morphFolder = gui.addFolder('Morph Targets');
