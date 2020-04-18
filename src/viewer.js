@@ -46,7 +46,7 @@ import { environments } from '../assets/environment/index.js';
 import { createBackground } from '../lib/three-vignette.js';
 
 // nfrechette - BEGIN
-import { TrackArray, SampleTypes, QVV, RoundingPolicy } from 'acl-encoder';
+import { TrackArray, SampleTypes, QVV, RoundingPolicy, compress } from 'acl-encoder';
 // nfrechette - END
 
 const DEFAULT_CAMERA = '[default]';
@@ -631,18 +631,27 @@ export class Viewer {
   }
 
   compressWithACL ( clips ) {
-    console.time('acl::compress')
+    console.time('compressWithACL')
 
     clips.forEach((clip) => {
       // Cache our original tracks and convert them to ACL tracks
       clip.refTracks = clip.tracks
       clip.aclTracks = this.convertClipToACLTracks(clip)
 
+      {
+        console.time('compress')
+
+        // Compress our clip with ACL
+        clip.aclCompressedClip = compress(clip.aclTracks)
+
+        console.timeEnd('compress')
+      }
+
       // Bind our clip to playback from ACL tracks
       this.bindACLProxy(clip)
     })
 
-    console.timeEnd('acl::compress')
+    console.timeEnd('compressWithACL')
 
     this.updateAnimationSource()
   }
