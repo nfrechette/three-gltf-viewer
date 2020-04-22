@@ -47,6 +47,7 @@ import { createBackground } from '../lib/three-vignette.js';
 
 // nfrechette - BEGIN
 import { TrackArray, SampleTypes, QVV, RoundingPolicy, Encoder } from 'acl';
+import { DecompressedTracks, Decoder } from 'acl';
 // nfrechette - END
 
 const DEFAULT_CAMERA = '[default]';
@@ -69,6 +70,87 @@ const MAP_NAMES = [
 const Preset = {ASSET_GENERATOR: 'assetgenerator'};
 
 Cache.enabled = true;
+
+// nfrechette - BEGIN
+class ACLRawInterpolant {
+  constructor(aclTracks, track, result) {
+    this.aclTracks = aclTracks
+    this.aclTrackIndex = track.aclTrackIndex
+    this.propertyName = track.propertyName
+    this.track = track
+    this.resultBuffer = result
+  }
+
+  evaluate(t) {
+    const transform = this.aclTracks.sampleTrack(this.aclTrackIndex, t, RoundingPolicy.None)
+
+    if (this.propertyName === 'quaternion') {
+      this.resultBuffer[0] = transform.rotation.x
+      this.resultBuffer[1] = transform.rotation.y
+      this.resultBuffer[2] = transform.rotation.z
+      this.resultBuffer[3] = transform.rotation.w
+    }
+    else if (this.propertyName === 'position') {
+      this.resultBuffer[0] = transform.translation.x
+      this.resultBuffer[1] = transform.translation.y
+      this.resultBuffer[2] = transform.translation.z
+    }
+    else if (this.propertyName === 'scale') {
+      this.resultBuffer[0] = transform.scale.x
+      this.resultBuffer[1] = transform.scale.y
+      this.resultBuffer[2] = transform.scale.z
+    }
+
+    return this.resultBuffer
+  }
+}
+
+class ACLInterpolant {
+  constructor(compressedTracks, decompressedTracks, decoder, track, result) {
+    this.compressedTracks = compressedTracks
+    this.decompressedTracks = decompressedTracks
+    this.decoder = decoder
+    this.aclTrackIndex = track.aclTrackIndex
+    this.trackOffset = track.aclTrackIndex * 12 // 12 floats per QVV
+    this.propertyName = track.propertyName
+    this.track = track
+    this.resultBuffer = result
+
+    this.decompressedTracks.cachedTime = -1.0
+  }
+
+  evaluate(t) {
+    if (this.decompressedTracks.cachedTime != t) {
+      this.decoder.decompressTracks(this.compressedTracks, t, RoundingPolicy.None, this.decompressedTracks)
+      this.decompressedTracks.cachedTime = t
+    }
+
+    //this.decoder.decompressTrack(this.compressedTracks, this.aclTrackIndex, t, RoundingPolicy.None, this.decompressedTracks)
+
+    const array = this.decompressedTracks.array
+    const offset = this.trackOffset
+
+    if (this.propertyName === 'quaternion') {
+      this.resultBuffer[0] = array[offset + 0]
+      this.resultBuffer[1] = array[offset + 1]
+      this.resultBuffer[2] = array[offset + 2]
+      this.resultBuffer[3] = array[offset + 3]
+    }
+    else if (this.propertyName === 'position') {
+      this.resultBuffer[0] = array[offset + 4]
+      this.resultBuffer[1] = array[offset + 5]
+      this.resultBuffer[2] = array[offset + 6]
+    }
+    else if (this.propertyName === 'scale') {
+      this.resultBuffer[0] = array[offset + 8]
+      this.resultBuffer[1] = array[offset + 9]
+      this.resultBuffer[2] = array[offset + 10]
+    }
+
+    return this.resultBuffer
+  }
+}
+// nfrechette - END
 
 export class Viewer {
 
@@ -165,6 +247,11 @@ export class Viewer {
     this.animate = this.animate.bind(this);
     requestAnimationFrame( this.animate );
     window.addEventListener('resize', this.resize.bind(this), false);
+
+    // nfrechette - BEGIN
+    this._aclEncoder = new Encoder()
+    this._aclDecoder = new Decoder()
+    // nfrechette - END
   }
 
   animate (time) {
@@ -589,62 +676,29 @@ export class Viewer {
   }
 
   bindACLProxy ( clip ) {
-    class ACLInterpolant {
-      constructor(aclTracks, track, result) {
-        this.aclTracks = aclTracks
-        this.aclTrackIndex = track.aclTrackIndex
-        this.propertyName = track.propertyName
-        this.track = track
-        this.resultBuffer = result
-      }
-
-      evaluate(t) {
-        const transform = this.aclTracks.sampleTrack(this.aclTrackIndex, t, RoundingPolicy.Nearest)
-
-        if (this.propertyName === 'quaternion') {
-          this.resultBuffer[0] = transform.rotation.x
-          this.resultBuffer[1] = transform.rotation.y
-          this.resultBuffer[2] = transform.rotation.z
-          this.resultBuffer[3] = transform.rotation.w
-        }
-        else if (this.propertyName === 'position') {
-          this.resultBuffer[0] = transform.translation.x
-          this.resultBuffer[1] = transform.translation.y
-          this.resultBuffer[2] = transform.translation.z
-        }
-        else if (this.propertyName === 'scale') {
-          this.resultBuffer[0] = transform.scale.x
-          this.resultBuffer[1] = transform.scale.y
-          this.resultBuffer[2] = transform.scale.z
-        }
-
-        return this.resultBuffer
-      }
-    }
+    const decoder = this._aclDecoder
 
     clip.tracks.forEach((track) => {
       track.createInterpolantRef = track.createInterpolant
       track.createInterpolantACLRaw = function (result) {
-        return new ACLInterpolant(clip.aclTracks, track, result)
+        return new ACLRawInterpolant(clip.aclTracks, track, result)
+      }
+      track.createInterpolantACL = function (result) {
+        return new ACLInterpolant(clip.aclCompressedTracks, clip.aclDecompressedTracks, decoder, track, result)
       }
     })
   }
 
   compressWithACL ( clips ) {
-    if (!this._aclEncoder) {
-      this._aclEncoder = new Encoder()
-    }
-
     clips.forEach((clip) => {
       // Cache our original tracks and convert them to ACL tracks
       clip.refTracks = clip.tracks
       clip.aclTracks = this.convertClipToACLTracks(clip)
 
       // Compress our clip with ACL
-      this._aclEncoder.compress(clip.aclTracks)
-        .then(compressedClip => {
-          clip.aclCompressedClip = compressedClip
-        })
+      const compressedTracks = this._aclEncoder.compress(clip.aclTracks)
+      clip.aclCompressedTracks = compressedTracks
+      clip.aclDecompressedTracks = new DecompressedTracks()
 
       // Bind our clip to playback from ACL tracks
       this.bindACLProxy(clip)
@@ -666,9 +720,14 @@ export class Viewer {
           track.createInterpolant = track.createInterpolantACLRaw
         }
         else if (this.state.animSource === 'ACL Compressed') {
-          track.createInterpolant = null
+          track.createInterpolant = track.createInterpolantACL
         }
       })
+
+      // Always reset our ACL decompressed tracks cache
+      if (clip.aclDecompressedTracks) {
+        clip.aclDecompressedTracks.cachedTime = -1.0
+      }
 
       // Remove any stale data from the mixer
       this.mixer.uncacheClip(clip)
