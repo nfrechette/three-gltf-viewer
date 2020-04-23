@@ -218,7 +218,7 @@ export class Viewer {
       skeleton: false,
       grid: false,
 
-      animSource: 'Source File', // nfrechette
+      animSource: 'ACL Compressed', // nfrechette
 
       // Lights
       addLights: true,
