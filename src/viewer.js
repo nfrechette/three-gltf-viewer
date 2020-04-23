@@ -150,6 +150,45 @@ class ACLInterpolant {
     return this.resultBuffer
   }
 }
+
+class ACLPerTrackInterpolant {
+  constructor(compressedTracks, decompressedTracks, decoder, track, result) {
+    this.compressedTracks = compressedTracks
+    this.decompressedTracks = decompressedTracks
+    this.decoder = decoder
+    this.aclTrackIndex = track.aclTrackIndex
+    this.trackOffset = track.aclTrackIndex * 12 // 12 floats per QVV
+    this.propertyName = track.propertyName
+    this.track = track
+    this.resultBuffer = result
+  }
+
+  evaluate(t) {
+    this.decoder.decompressTrack(this.compressedTracks, this.aclTrackIndex, t, RoundingPolicy.None, this.decompressedTracks)
+
+    const array = this.decompressedTracks.array
+    const offset = this.trackOffset
+
+    if (this.propertyName === 'quaternion') {
+      this.resultBuffer[0] = array[offset + 0]
+      this.resultBuffer[1] = array[offset + 1]
+      this.resultBuffer[2] = array[offset + 2]
+      this.resultBuffer[3] = array[offset + 3]
+    }
+    else if (this.propertyName === 'position') {
+      this.resultBuffer[0] = array[offset + 4]
+      this.resultBuffer[1] = array[offset + 5]
+      this.resultBuffer[2] = array[offset + 6]
+    }
+    else if (this.propertyName === 'scale') {
+      this.resultBuffer[0] = array[offset + 8]
+      this.resultBuffer[1] = array[offset + 9]
+      this.resultBuffer[2] = array[offset + 10]
+    }
+
+    return this.resultBuffer
+  }
+}
 // nfrechette - END
 
 export class Viewer {
@@ -686,6 +725,9 @@ export class Viewer {
       track.createInterpolantACL = function (result) {
         return new ACLInterpolant(clip.aclCompressedTracks, clip.aclDecompressedTracks, decoder, track, result)
       }
+      track.createInterpolantACLPerTrack = function (result) {
+        return new ACLPerTrackInterpolant(clip.aclCompressedTracks, clip.aclDecompressedTracks, decoder, track, result)
+      }
     })
   }
 
@@ -721,6 +763,9 @@ export class Viewer {
         }
         else if (this.state.animSource === 'ACL Compressed') {
           track.createInterpolant = track.createInterpolantACL
+        }
+        else if (this.state.animSource === 'ACL Compressed (per track)') {
+          track.createInterpolant = track.createInterpolantACLPerTrack
         }
       })
 
@@ -997,7 +1042,7 @@ export class Viewer {
     this.animFolder.add({playAll: () => this.playAllClips()}, 'playAll');
 
     // nfrechette - BEGIN
-    const animSourceCtrl = this.animFolder.add(this.state, 'animSource', ['Source File', 'ACL Raw', 'ACL Compressed']);
+    const animSourceCtrl = this.animFolder.add(this.state, 'animSource', ['Source File', 'ACL Raw', 'ACL Compressed', 'ACL Compressed (per track)']);
     animSourceCtrl.onChange(() => this.updateAnimationSource());
     // nfrechette - END
 
