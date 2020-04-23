@@ -110,13 +110,25 @@ class ACLInterpolant {
     this.compressedTracks = compressedTracks
     this.decompressedTracks = decompressedTracks
     this.decoder = decoder
-    this.aclTrackIndex = track.aclTrackIndex
-    this.trackOffset = track.aclTrackIndex * 12 // 12 floats per QVV
-    this.propertyName = track.propertyName
-    this.track = track
     this.resultBuffer = result
 
-    this.decompressedTracks.cachedTime = -1.0
+    let numOutputValues = 0
+    let inputOffset = 0
+    if (track.propertyName === 'quaternion') {
+      numOutputValues = 4
+      inputOffset = 0
+    }
+    else if (track.propertyName === 'position') {
+      numOutputValues = 3
+      inputOffset = 4
+    }
+    else if (track.propertyName === 'scale') {
+      numOutputValues = 3
+      inputOffset = 8
+    }
+
+    this.numOutputValues = numOutputValues
+    this.inputOffset = track.aclTrackIndex * 12 + inputOffset // 12 floats per QVV
   }
 
   evaluate(t) {
@@ -125,26 +137,17 @@ class ACLInterpolant {
       this.decompressedTracks.cachedTime = t
     }
 
-    //this.decoder.decompressTrack(this.compressedTracks, this.aclTrackIndex, t, RoundingPolicy.None, this.decompressedTracks)
-
     const array = this.decompressedTracks.array
-    const offset = this.trackOffset
-
-    if (this.propertyName === 'quaternion') {
-      this.resultBuffer[0] = array[offset + 0]
-      this.resultBuffer[1] = array[offset + 1]
-      this.resultBuffer[2] = array[offset + 2]
-      this.resultBuffer[3] = array[offset + 3]
-    }
-    else if (this.propertyName === 'position') {
-      this.resultBuffer[0] = array[offset + 4]
-      this.resultBuffer[1] = array[offset + 5]
-      this.resultBuffer[2] = array[offset + 6]
-    }
-    else if (this.propertyName === 'scale') {
-      this.resultBuffer[0] = array[offset + 8]
-      this.resultBuffer[1] = array[offset + 9]
-      this.resultBuffer[2] = array[offset + 10]
+    const inputOffset = this.inputOffset
+    switch (this.numOutputValues) {
+      case 4:
+        this.resultBuffer[3] = array[inputOffset + 3]
+        // Fall through
+      case 3:
+        this.resultBuffer[2] = array[inputOffset + 2]
+        this.resultBuffer[1] = array[inputOffset + 1]
+        this.resultBuffer[0] = array[inputOffset + 0]
+        break
     }
 
     return this.resultBuffer
