@@ -496,6 +496,20 @@ export class Viewer {
       this.mixer = null;
     }
 
+    // nfrechette - BEGIN
+    if (this.clips) {
+      this.clips.forEach((clip) => {
+        if (clip.aclCompressedTracks) {
+          clip.aclCompressedTracks.dispose()
+        }
+
+        if (clip.aclDecompressedTracks) {
+          clip.aclDecompressedTracks.dispose()
+        }
+      })
+    }
+    // nfrechette - END
+
     this.clips = clips;
     if (!clips.length) return;
 
@@ -745,9 +759,10 @@ export class Viewer {
       aclPromise.then(() => {
           // Compress our clip with ACL
           const compressedTracks = this._aclEncoder.compress(clip.aclTracks)
+          compressedTracks.bind(this._aclDecoder)
 
           clip.aclCompressedTracks = compressedTracks
-          clip.aclDecompressedTracks = new DecompressedTracks()
+          clip.aclDecompressedTracks = new DecompressedTracks(this._aclDecoder)
 
           // Bind our clip to playback from ACL tracks
           this.bindACLProxy(clip)
@@ -756,6 +771,7 @@ export class Viewer {
 
     aclPromise.then(() => {
       this.updateAnimationSource()
+      this._aclDecoder.garbageCollect()
     })
   }
 
