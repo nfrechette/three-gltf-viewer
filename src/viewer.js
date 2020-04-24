@@ -666,6 +666,7 @@ export class Viewer {
         qvv.rotation.y = node.quaternion.y
         qvv.rotation.z = node.quaternion.z
         qvv.rotation.w = node.quaternion.w
+        qvv.rotation.normalize()
       }
       if (node.translation) {
         qvv.translation.x = node.translation.x
@@ -711,6 +712,7 @@ export class Viewer {
             qvv.rotation.y = resultBuffer[1]
             qvv.rotation.z = resultBuffer[2]
             qvv.rotation.w = resultBuffer[3]
+            qvv.rotation.normalize()
           }
           else if (propertyName === 'position') {
             qvv.translation.x = resultBuffer[0]
