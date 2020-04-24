@@ -763,6 +763,8 @@ export class Viewer {
           const compressedTracks = this._aclEncoder.compress(clip.aclTracks)
           compressedTracks.bind(this._aclDecoder)
 
+          console.log(`ACL compressed size: ${compressedTracks.byteLength} bytes`)
+
           clip.aclCompressedTracks = compressedTracks
           clip.aclDecompressedTracks = new DecompressedTracks(this._aclDecoder)
 
