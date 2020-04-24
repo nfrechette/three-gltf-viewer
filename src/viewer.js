@@ -735,21 +735,28 @@ export class Viewer {
   }
 
   compressWithACL ( clips ) {
+    const aclPromise = Promise.all([this._aclEncoder.isReady(), this._aclDecoder.isReady()])
+
     clips.forEach((clip) => {
       // Cache our original tracks and convert them to ACL tracks
       clip.refTracks = clip.tracks
       clip.aclTracks = this.convertClipToACLTracks(clip)
 
-      // Compress our clip with ACL
-      const compressedTracks = this._aclEncoder.compress(clip.aclTracks)
-      clip.aclCompressedTracks = compressedTracks
-      clip.aclDecompressedTracks = new DecompressedTracks()
+      aclPromise.then(() => {
+          // Compress our clip with ACL
+          const compressedTracks = this._aclEncoder.compress(clip.aclTracks)
 
-      // Bind our clip to playback from ACL tracks
-      this.bindACLProxy(clip)
+          clip.aclCompressedTracks = compressedTracks
+          clip.aclDecompressedTracks = new DecompressedTracks()
+
+          // Bind our clip to playback from ACL tracks
+          this.bindACLProxy(clip)
+        })
     })
 
-    this.updateAnimationSource()
+    aclPromise.then(() => {
+      this.updateAnimationSource()
+    })
   }
 
   updateAnimationSource () {
