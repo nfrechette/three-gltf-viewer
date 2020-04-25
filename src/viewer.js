@@ -72,6 +72,8 @@ const Preset = {ASSET_GENERATOR: 'assetgenerator'};
 Cache.enabled = true;
 
 // nfrechette - BEGIN
+// This uses the raw ACL tracks to interpolate and playback
+// This is slow and for debugging purposes only
 class ACLRawInterpolant {
   constructor(aclTracks, track, result) {
     this.aclTracks = aclTracks
@@ -105,6 +107,7 @@ class ACLRawInterpolant {
   }
 }
 
+// This uses the compressed ACL tracks to interpolate and playback
 class ACLInterpolant {
   constructor(compressedTracks, decompressedTracks, decoder, track, result) {
     this.compressedTracks = compressedTracks
@@ -154,6 +157,9 @@ class ACLInterpolant {
   }
 }
 
+// This uses the compressed ACL tracks to interpolate and playback
+// Unlike ACLInterpolant, it will decompress each track individually
+// This is slow and for debugging purposes only
 class ACLPerTrackInterpolant {
   constructor(compressedTracks, decompressedTracks, decoder, track, result) {
     this.compressedTracks = compressedTracks
