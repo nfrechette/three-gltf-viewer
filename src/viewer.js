@@ -646,24 +646,24 @@ export class Viewer {
     const sampleRate = this.findClipSampleRate(clip, duration)
     const numSamplesPerTrack = this.calcNumSamples(duration, sampleRate)
 
-    const tracks = new TrackArray(numTracks, SampleTypes.QVV, numSamplesPerTrack, sampleRate);
+    const qvvTracks = new TrackArray(numTracks, SampleTypes.QVV, numSamplesPerTrack, sampleRate);
 
     // TODO: Display this in the viewport?
-    console.log(`num tracks: ${tracks.numTracks}`)
-    console.log(`sample rate: ${tracks.sampleRate}`)
-    console.log(`num samples per track: ${tracks.numSamplesPerTrack}`)
-    console.log(`duration: ${tracks.duration}`)
+    console.log(`num tracks: ${qvvTracks.numTracks}`)
+    console.log(`sample rate: ${qvvTracks.sampleRate}`)
+    console.log(`num samples per track: ${qvvTracks.numSamplesPerTrack}`)
+    console.log(`duration: ${qvvTracks.duration}`)
 
     // Populate our data
     for (let trackIndex = 0; trackIndex < numTracks; ++trackIndex) {
       const nodeUUID = nodeUUIDs[trackIndex]
       const node = nodes[nodeUUID]
 
-      const track = tracks.at(trackIndex)
+      const qvvTrack = qvvTracks.at(trackIndex)
 
       // Setup our description
       if (node.parent) {
-        track.description.parentIndex = nodeUUIDs.indexOf(node.parent.uuid)
+        qvvTrack.description.parentIndex = nodeUUIDs.indexOf(node.parent.uuid)
       }
 
       const qvv = QVV.identity
@@ -687,7 +687,7 @@ export class Viewer {
 
       // Write the bind pose to every sample
       for (let sampleIndex = 0; sampleIndex < numSamplesPerTrack; ++sampleIndex) {
-        const sample = track.at(sampleIndex)
+        const sample = qvvTrack.at(sampleIndex)
         sample.setQVV(qvv)
       }
 
@@ -710,7 +710,7 @@ export class Viewer {
           const sampleTime = Math.min(sampleIndex / sampleRate, duration);
           interpolant.evaluate(sampleTime)
 
-          const sample = track.at(sampleIndex)
+          const sample = qvvTrack.at(sampleIndex)
           sample.getQVV(qvv)
 
           if (propertyName === 'quaternion') {
@@ -736,7 +736,7 @@ export class Viewer {
       }
     }
 
-    return tracks
+    return qvvTracks
   }
 
   bindACLProxy ( clip ) {
