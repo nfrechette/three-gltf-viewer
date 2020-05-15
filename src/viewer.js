@@ -75,32 +75,39 @@ Cache.enabled = true;
 // This uses the raw ACL tracks to interpolate and playback
 // This is slow and for debugging purposes only
 class ACLRawInterpolant {
-  constructor(aclTracks, track, result) {
-    this.aclTracks = aclTracks
-    this.aclTrackIndex = track.aclTrackIndex
-    this.propertyName = track.propertyName
+  constructor(clip, track, result) {
+    this.clip = clip
     this.track = track
     this.resultBuffer = result
+    this.numOutputValues = track.numBlendWeightTracks
   }
 
   evaluate(t) {
-    const transform = this.aclTracks.sampleTrack(this.aclTrackIndex, t, RoundingPolicy.None)
+    if (this.track.propertyName === 'morphTargetInfluences') {
+      for (let i = 0; i < this.numOutputValues; ++i) {
+        const trackIndex = this.track.aclTrackOffset + i
+        this.resultBuffer[i] = this.clip.aclWeights.raw.sampleTrack(trackIndex, t, RoundingPolicy.None)
+      }
+    }
+    else {
+      const transform = this.clip.aclTransforms.raw.sampleTrack(this.track.aclTrackIndex, t, RoundingPolicy.None)
 
-    if (this.propertyName === 'quaternion') {
-      this.resultBuffer[0] = transform.rotation.x
-      this.resultBuffer[1] = transform.rotation.y
-      this.resultBuffer[2] = transform.rotation.z
-      this.resultBuffer[3] = transform.rotation.w
-    }
-    else if (this.propertyName === 'position') {
-      this.resultBuffer[0] = transform.translation.x
-      this.resultBuffer[1] = transform.translation.y
-      this.resultBuffer[2] = transform.translation.z
-    }
-    else if (this.propertyName === 'scale') {
-      this.resultBuffer[0] = transform.scale.x
-      this.resultBuffer[1] = transform.scale.y
-      this.resultBuffer[2] = transform.scale.z
+      if (this.track.propertyName === 'quaternion') {
+        this.resultBuffer[0] = transform.rotation.x
+        this.resultBuffer[1] = transform.rotation.y
+        this.resultBuffer[2] = transform.rotation.z
+        this.resultBuffer[3] = transform.rotation.w
+      }
+      else if (this.track.propertyName === 'position') {
+        this.resultBuffer[0] = transform.translation.x
+        this.resultBuffer[1] = transform.translation.y
+        this.resultBuffer[2] = transform.translation.z
+      }
+      else if (this.track.propertyName === 'scale') {
+        this.resultBuffer[0] = transform.scale.x
+        this.resultBuffer[1] = transform.scale.y
+        this.resultBuffer[2] = transform.scale.z
+      }
     }
 
     return this.resultBuffer
@@ -109,29 +116,38 @@ class ACLRawInterpolant {
 
 // This uses the compressed ACL tracks to interpolate and playback
 class ACLInterpolant {
-  constructor(compressedTracks, decompressedTracks, decoder, track, result) {
-    this.compressedTracks = compressedTracks
-    this.decompressedTracks = decompressedTracks
+  constructor(clip, decoder, track, result) {
+    if (track.propertyName === 'morphTargetInfluences') {
+      this.compressedTracks = clip.aclWeights.compressed
+      this.decompressedTracks = clip.aclWeights.decompressed
+      this.numOutputValues = track.numBlendWeightTracks
+      this.inputOffset = track.aclTrackOffset
+    }
+    else {
+      this.compressedTracks = clip.aclTransforms.compressed
+      this.decompressedTracks = clip.aclTransforms.decompressed
+
+      let numOutputValues = 0
+      let inputOffset = 0
+      if (track.propertyName === 'quaternion') {
+        numOutputValues = 4
+        inputOffset = 0
+      }
+      else if (track.propertyName === 'position') {
+        numOutputValues = 3
+        inputOffset = 4
+      }
+      else if (track.propertyName === 'scale') {
+        numOutputValues = 3
+        inputOffset = 8
+      }
+
+      this.numOutputValues = numOutputValues
+      this.inputOffset = track.aclTrackIndex * 12 + inputOffset // 12 floats per QVV
+    }
+
     this.decoder = decoder
     this.resultBuffer = result
-
-    let numOutputValues = 0
-    let inputOffset = 0
-    if (track.propertyName === 'quaternion') {
-      numOutputValues = 4
-      inputOffset = 0
-    }
-    else if (track.propertyName === 'position') {
-      numOutputValues = 3
-      inputOffset = 4
-    }
-    else if (track.propertyName === 'scale') {
-      numOutputValues = 3
-      inputOffset = 8
-    }
-
-    this.numOutputValues = numOutputValues
-    this.inputOffset = track.aclTrackIndex * 12 + inputOffset // 12 floats per QVV
   }
 
   evaluate(t) {
@@ -142,15 +158,8 @@ class ACLInterpolant {
 
     const array = this.decompressedTracks.array
     const inputOffset = this.inputOffset
-    switch (this.numOutputValues) {
-      case 4:
-        this.resultBuffer[3] = array[inputOffset + 3]
-        // Fall through
-      case 3:
-        this.resultBuffer[2] = array[inputOffset + 2]
-        this.resultBuffer[1] = array[inputOffset + 1]
-        this.resultBuffer[0] = array[inputOffset + 0]
-        break
+    for (let i = 0; i < this.numOutputValues; ++i) {
+      this.resultBuffer[i] = array[inputOffset + i]
     }
 
     return this.resultBuffer
@@ -161,38 +170,61 @@ class ACLInterpolant {
 // Unlike ACLInterpolant, it will decompress each track individually
 // This is slow and for debugging purposes only
 class ACLPerTrackInterpolant {
-  constructor(compressedTracks, decompressedTracks, decoder, track, result) {
-    this.compressedTracks = compressedTracks
-    this.decompressedTracks = decompressedTracks
+  constructor(clip, decoder, track, result) {
+    if (track.propertyName === 'morphTargetInfluences') {
+      this.compressedTracks = clip.aclWeights.compressed
+      this.decompressedTracks = clip.aclWeights.decompressed
+      this.numOutputValues = track.numBlendWeightTracks
+      this.inputOffset = track.aclTrackOffset
+      this.isBlendWeights = true
+    }
+    else {
+      this.compressedTracks = clip.aclTransforms.compressed
+      this.decompressedTracks = clip.aclTransforms.decompressed
+
+      let numOutputValues = 0
+      let inputOffset = 0
+      if (track.propertyName === 'quaternion') {
+        numOutputValues = 4
+        inputOffset = 0
+      }
+      else if (track.propertyName === 'position') {
+        numOutputValues = 3
+        inputOffset = 4
+      }
+      else if (track.propertyName === 'scale') {
+        numOutputValues = 3
+        inputOffset = 8
+      }
+
+      this.numOutputValues = numOutputValues
+      this.inputOffset = track.aclTrackIndex * 12 + inputOffset // 12 floats per QVV
+      this.aclTrackIndex = track.aclTrackIndex
+      this.isBlendWeights = false
+    }
+
     this.decoder = decoder
-    this.aclTrackIndex = track.aclTrackIndex
-    this.trackOffset = track.aclTrackIndex * 12 // 12 floats per QVV
-    this.propertyName = track.propertyName
-    this.track = track
     this.resultBuffer = result
   }
 
   evaluate(t) {
-    this.decoder.decompressTrack(this.compressedTracks, this.aclTrackIndex, t, RoundingPolicy.None, this.decompressedTracks)
+    if (this.isBlendWeights) {
+      const inputOffset = this.inputOffset
+      for (let i = 0; i < this.numOutputValues; ++i) {
+        this.decoder.decompressTrack(this.compressedTracks, inputOffset + i, t, RoundingPolicy.None, this.decompressedTracks)
 
-    const array = this.decompressedTracks.array
-    const offset = this.trackOffset
+        const array = this.decompressedTracks.array
+        this.resultBuffer[i] = array[inputOffset + i]
+      }
+    }
+    else {
+      this.decoder.decompressTrack(this.compressedTracks, this.aclTrackIndex, t, RoundingPolicy.None, this.decompressedTracks)
 
-    if (this.propertyName === 'quaternion') {
-      this.resultBuffer[0] = array[offset + 0]
-      this.resultBuffer[1] = array[offset + 1]
-      this.resultBuffer[2] = array[offset + 2]
-      this.resultBuffer[3] = array[offset + 3]
-    }
-    else if (this.propertyName === 'position') {
-      this.resultBuffer[0] = array[offset + 4]
-      this.resultBuffer[1] = array[offset + 5]
-      this.resultBuffer[2] = array[offset + 6]
-    }
-    else if (this.propertyName === 'scale') {
-      this.resultBuffer[0] = array[offset + 8]
-      this.resultBuffer[1] = array[offset + 9]
-      this.resultBuffer[2] = array[offset + 10]
+      const array = this.decompressedTracks.array
+      const inputOffset = this.inputOffset
+      for (let i = 0; i < this.numOutputValues; ++i) {
+        this.resultBuffer[i] = array[inputOffset + i]
+      }
     }
 
     return this.resultBuffer
@@ -505,12 +537,16 @@ export class Viewer {
     // nfrechette - BEGIN
     if (this.clips) {
       this.clips.forEach((clip) => {
-        if (clip.aclCompressedTracks) {
-          clip.aclCompressedTracks.dispose()
+        if (clip.aclTransforms) {
+          clip.aclTransforms.compressed.dispose()
+          clip.aclTransforms.decompressed.dispose()
+          clip.aclTransforms = null
         }
 
-        if (clip.aclDecompressedTracks) {
-          clip.aclDecompressedTracks.dispose()
+        if (clip.aclWeights) {
+          clip.aclWeights.compressed.dispose()
+          clip.aclWeights.decompressed.dispose()
+          clip.aclWeights = null
         }
       })
     }
@@ -620,13 +656,15 @@ export class Viewer {
       endingEnd: ZeroCurvatureEnding
     };
 
-    const resultBuffer = new Float64Array(4)
+    let resultBuffer = new Float64Array(4)
 
     // Find all nodes
     const nodes = {}
     this.content.traverse(node => nodes[node.uuid] = node)
     const nodeUUIDs = Object.keys(nodes)
     const numTracks = nodeUUIDs.length
+    let numBlendWeightTracks = 0
+    const blendWeightProps = []
 
     // Find the props that have data
     const propsWithData = {}
@@ -635,6 +673,14 @@ export class Viewer {
       const parsedPath = false
       const prop = PropertyBinding.create(this.content, track.name, parsedPath)
       prop.track = track
+      prop.track.propertyName = prop.parsedPath.propertyName
+
+      if (prop.parsedPath.propertyName === 'morphTargetInfluences') {
+        blendWeightProps.push(prop)
+        track.aclTrackOffset = numBlendWeightTracks
+        numBlendWeightTracks += prop.node.morphTargetInfluences.length
+        track.numBlendWeightTracks = numBlendWeightTracks
+      }
 
       if (!propsWithData[prop.node.uuid]) {
         propsWithData[prop.node.uuid] = []
@@ -647,14 +693,16 @@ export class Viewer {
     const numSamplesPerTrack = this.calcNumSamples(duration, sampleRate)
 
     const qvvTracks = new TrackArray(numTracks, SampleTypes.QVV, numSamplesPerTrack, sampleRate);
+    const weightTracks = new TrackArray(numBlendWeightTracks, SampleTypes.Float, numSamplesPerTrack, sampleRate);
 
     // TODO: Display this in the viewport?
-    console.log(`num tracks: ${qvvTracks.numTracks}`)
+    console.log(`num transform tracks: ${qvvTracks.numTracks}`)
+    console.log(`num blend weight tracks: ${weightTracks.numTracks}`)
     console.log(`sample rate: ${qvvTracks.sampleRate}`)
     console.log(`num samples per track: ${qvvTracks.numSamplesPerTrack}`)
     console.log(`duration: ${qvvTracks.duration}`)
 
-    // Populate our data
+    // Populate our QVV track data
     for (let trackIndex = 0; trackIndex < numTracks; ++trackIndex) {
       const nodeUUID = nodeUUIDs[trackIndex]
       const node = nodes[nodeUUID]
@@ -697,46 +745,99 @@ export class Viewer {
         const prop = props[propIndex]
         const propertyName = prop.parsedPath.propertyName
 
-        // Add metadata to indicate which
+        // Add metadata
         prop.track.aclTrackIndex = trackIndex
-        prop.track.propertyName = propertyName
 
         // This track is animated, read the data
         const interpolant = prop.track.createInterpolant(null)
         interpolant.settings = interpolantSettings
         interpolant.resultBuffer = resultBuffer
 
-        for (let sampleIndex = 0; sampleIndex < numSamplesPerTrack; ++sampleIndex) {
-          const sampleTime = Math.min(sampleIndex / sampleRate, duration);
-          interpolant.evaluate(sampleTime)
+        if (propertyName === 'quaternion') {
+          for (let sampleIndex = 0; sampleIndex < numSamplesPerTrack; ++sampleIndex) {
+            const sampleTime = Math.min(sampleIndex / sampleRate, duration)
+            interpolant.evaluate(sampleTime)
 
-          const sample = qvvTrack.at(sampleIndex)
-          sample.getQVV(qvv)
+            const sample = qvvTrack.at(sampleIndex)
+            sample.getQVV(qvv)
 
-          if (propertyName === 'quaternion') {
             qvv.rotation.x = resultBuffer[0]
             qvv.rotation.y = resultBuffer[1]
             qvv.rotation.z = resultBuffer[2]
             qvv.rotation.w = resultBuffer[3]
             qvv.rotation.normalize()
+
+            sample.setQVV(qvv)
           }
-          else if (propertyName === 'position') {
+        }
+        else if (propertyName === 'position') {
+          for (let sampleIndex = 0; sampleIndex < numSamplesPerTrack; ++sampleIndex) {
+            const sampleTime = Math.min(sampleIndex / sampleRate, duration)
+            interpolant.evaluate(sampleTime)
+
+            const sample = qvvTrack.at(sampleIndex)
+            sample.getQVV(qvv)
+
             qvv.translation.x = resultBuffer[0]
             qvv.translation.y = resultBuffer[1]
             qvv.translation.z = resultBuffer[2]
+
+            sample.setQVV(qvv)
           }
-          else if (propertyName === 'scale') {
+        }
+        else if (propertyName === 'scale') {
+          for (let sampleIndex = 0; sampleIndex < numSamplesPerTrack; ++sampleIndex) {
+            const sampleTime = Math.min(sampleIndex / sampleRate, duration)
+            interpolant.evaluate(sampleTime)
+
+            const sample = qvvTrack.at(sampleIndex)
+            sample.getQVV(qvv)
+
             qvv.scale.x = resultBuffer[0]
             qvv.scale.y = resultBuffer[1]
             qvv.scale.z = resultBuffer[2]
-          }
 
-          sample.setQVV(qvv)
+            sample.setQVV(qvv)
+          }
         }
       }
     }
 
-    return qvvTracks
+    // Populate our blend weight track data
+    blendWeightProps.forEach((prop) => {
+      const numPropTracks = prop.track.numBlendWeightTracks
+      const trackOffset = prop.track.aclTrackOffset
+
+      // Set our track settings
+      for (let trackIndex = 0; trackIndex < numPropTracks; ++trackIndex) {
+        const weightTrack = weightTracks.at(trackOffset + trackIndex)
+        weightTrack.description.precision = 0.0001
+      }
+
+      // Make sure our buffer is large enough
+      if (resultBuffer.length < numPropTracks) {
+        resultBuffer = new Float64Array(numPropTracks)
+      }
+
+      // This track is animated, read the data
+      const interpolant = prop.track.createInterpolant(null)
+      interpolant.settings = interpolantSettings
+      interpolant.resultBuffer = resultBuffer
+
+      for (let sampleIndex = 0; sampleIndex < numSamplesPerTrack; ++sampleIndex) {
+        const sampleTime = Math.min(sampleIndex / sampleRate, duration)
+        interpolant.evaluate(sampleTime)
+
+        for (let trackIndex = 0; trackIndex < numPropTracks; ++trackIndex) {
+          const weightTrack = weightTracks.at(trackOffset + trackIndex)
+
+          const sample = weightTrack.at(sampleIndex)
+          sample.setFloat(resultBuffer[trackIndex])
+        }
+      }
+    })
+
+    return { transforms: qvvTracks, weights: weightTracks }
   }
 
   bindACLProxy ( clip ) {
@@ -745,13 +846,13 @@ export class Viewer {
     clip.tracks.forEach((track) => {
       track.createInterpolantRef = track.createInterpolant
       track.createInterpolantACLRaw = function (result) {
-        return new ACLRawInterpolant(clip.aclTracks, track, result)
+        return new ACLRawInterpolant(clip, track, result)
       }
       track.createInterpolantACL = function (result) {
-        return new ACLInterpolant(clip.aclCompressedTracks, clip.aclDecompressedTracks, decoder, track, result)
+        return new ACLInterpolant(clip, decoder, track, result)
       }
       track.createInterpolantACLPerTrack = function (result) {
-        return new ACLPerTrackInterpolant(clip.aclCompressedTracks, clip.aclDecompressedTracks, decoder, track, result)
+        return new ACLPerTrackInterpolant(clip, decoder, track, result)
       }
     })
   }
@@ -766,13 +867,33 @@ export class Viewer {
 
       aclPromise.then(() => {
           // Compress our clip with ACL
-          const compressedTracks = this._aclEncoder.compress(clip.aclTracks)
-          compressedTracks.bind(this._aclDecoder)
+          if (clip.aclTracks.transforms.numTracks > 0) {
+            const aclTransforms = { raw: clip.aclTracks.transforms }
 
-          console.log(`ACL compressed size: ${compressedTracks.byteLength} bytes`)
+            const compressedTracks = this._aclEncoder.compress(aclTransforms.raw)
+            compressedTracks.bind(this._aclDecoder)
 
-          clip.aclCompressedTracks = compressedTracks
-          clip.aclDecompressedTracks = new DecompressedTracks(this._aclDecoder)
+            console.log(`ACL transform compressed size: ${compressedTracks.byteLength} bytes`)
+
+            aclTransforms.compressed = compressedTracks
+            aclTransforms.decompressed = new DecompressedTracks(this._aclDecoder)
+
+            clip.aclTransforms = aclTransforms
+          }
+
+          if (clip.aclTracks.weights.numTracks > 0) {
+            const aclWeights = { raw: clip.aclTracks.weights }
+
+            const compressedTracks = this._aclEncoder.compress(aclWeights.raw)
+            compressedTracks.bind(this._aclDecoder)
+
+            console.log(`ACL weights compressed size: ${compressedTracks.byteLength} bytes`)
+
+            aclWeights.compressed = compressedTracks
+            aclWeights.decompressed = new DecompressedTracks(this._aclDecoder)
+
+            clip.aclWeights = aclWeights
+          }
 
           // Bind our clip to playback from ACL tracks
           this.bindACLProxy(clip)
@@ -806,8 +927,11 @@ export class Viewer {
       })
 
       // Always reset our ACL decompressed tracks cache
-      if (clip.aclDecompressedTracks) {
-        clip.aclDecompressedTracks.cachedTime = -1.0
+      if (clip.aclTransforms) {
+        clip.aclTransforms.decompressed.cachedTime = -1.0
+      }
+      if (clip.aclWeights) {
+        clip.aclWeights.decompressed.cachedTime = -1.0
       }
 
       // Remove any stale data from the mixer
