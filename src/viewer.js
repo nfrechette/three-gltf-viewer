@@ -46,8 +46,8 @@ import { environments } from '../assets/environment/index.js';
 import { createBackground } from '../lib/three-vignette.js';
 
 // nfrechette - BEGIN
-import { TrackArray, SampleTypes, QVV, RoundingPolicy, Encoder } from 'acl';
-import { DecompressedTracks, Decoder } from 'acl';
+import { TrackArray, SampleTypes, QVV, RoundingPolicy, Encoder } from '@nfrechette/acl';
+import { DecompressedTracks, Decoder } from '@nfrechette/acl';
 // nfrechette - END
 
 const DEFAULT_CAMERA = '[default]';

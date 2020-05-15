@@ -55,7 +55,7 @@
     "parcel-plugin-static-files-copy": "^2.2.1"
   },
   "optionalDependencies": {
-    "acl": "file:../../acl-js"
+    "@nfrechette/acl": "file:../../acl-js"
   },
   "staticFiles": {
     "staticPath": [
