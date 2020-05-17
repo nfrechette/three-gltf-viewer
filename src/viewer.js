@@ -677,9 +677,11 @@ export class Viewer {
 
       if (prop.parsedPath.propertyName === 'morphTargetInfluences') {
         blendWeightProps.push(prop)
+        const numBlendWeights = prop.node.morphTargetInfluences.length
+        track.numBlendWeightTracks = numBlendWeights
+
         track.aclTrackOffset = numBlendWeightTracks
-        numBlendWeightTracks += prop.node.morphTargetInfluences.length
-        track.numBlendWeightTracks = numBlendWeightTracks
+        numBlendWeightTracks += numBlendWeights
       }
 
       if (!propsWithData[prop.node.uuid]) {
