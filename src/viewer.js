@@ -902,7 +902,6 @@ export class Viewer {
 
     aclPromise.then(() => {
       this.updateAnimationSource()
-      this._aclDecoder.garbageCollect()
     })
   }
 
