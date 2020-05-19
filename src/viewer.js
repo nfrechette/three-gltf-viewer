@@ -256,7 +256,12 @@ export class Viewer {
       skeleton: false,
       grid: false,
 
-      animSource: 'ACL Compressed', // nfrechette
+      // nfrechette - BEGIN
+      animSource: 'ACL Compressed',
+      jointPrecision: 0.0001, // 0.01cm
+      jointShellDistance: 1.0, // 1.0m
+      blendWeightPrecision: 0.0001,
+      // nfrechette - END
 
       // Lights
       addLights: true,
@@ -534,23 +539,7 @@ export class Viewer {
       this.mixer = null;
     }
 
-    // nfrechette - BEGIN
-    if (this.clips) {
-      this.clips.forEach((clip) => {
-        if (clip.aclTransforms) {
-          clip.aclTransforms.compressed.dispose()
-          clip.aclTransforms.decompressed.dispose()
-          clip.aclTransforms = null
-        }
-
-        if (clip.aclWeights) {
-          clip.aclWeights.compressed.dispose()
-          clip.aclWeights.decompressed.dispose()
-          clip.aclWeights = null
-        }
-      })
-    }
-    // nfrechette - END
+    this.freeACLMemory(this.clips)  // nfrechette
 
     this.clips = clips;
     if (!clips.length) return;
@@ -714,6 +703,8 @@ export class Viewer {
       // Setup our description
       if (node.parent) {
         qvvTrack.description.parentIndex = nodeUUIDs.indexOf(node.parent.uuid)
+        qvvTrack.description.precision = this.state.jointPrecision
+        qvvTrack.description.shellDistance = this.state.jointShellDistance
       }
 
       const qvv = QVV.identity
@@ -813,7 +804,7 @@ export class Viewer {
       // Set our track settings
       for (let trackIndex = 0; trackIndex < numPropTracks; ++trackIndex) {
         const weightTrack = weightTracks.at(trackOffset + trackIndex)
-        weightTrack.description.precision = 0.0001
+        weightTrack.description.precision = this.state.blendWeightPrecision
       }
 
       // Make sure our buffer is large enough
@@ -859,6 +850,40 @@ export class Viewer {
     })
   }
 
+  freeACLMemory ( clips ) {
+    if (clips) {
+      clips.forEach((clip) => {
+        if (clip.aclTransforms) {
+          clip.aclTransforms.compressed.dispose()
+          clip.aclTransforms.decompressed.dispose()
+          clip.aclTransforms = null
+        }
+
+        if (clip.aclWeights) {
+          clip.aclWeights.compressed.dispose()
+          clip.aclWeights.decompressed.dispose()
+          clip.aclWeights = null
+        }
+
+        if (clip.refTracks) {
+          clip.tracks = clip.refTracks
+          clip.refTracks = null
+          clip.aclTracks = null
+        }
+
+        clip.tracks.forEach((track) => {
+          if (track.createInterpolantRef) {
+            track.createInterpolant = track.createInterpolantRef
+            track.createInterpolantRef = null
+            track.createInterpolantACLRaw = null
+            track.createInterpolantACL = null
+            track.createInterpolantACLPerTrack = null
+          }
+        })
+      })
+    }
+  }
+
   compressWithACL ( clips ) {
     const aclPromise = Promise.all([this._aclEncoder.isReady(), this._aclDecoder.isReady()])
 
@@ -868,38 +893,38 @@ export class Viewer {
       clip.aclTracks = this.convertClipToACLTracks(clip)
 
       aclPromise.then(() => {
-          // Compress our clip with ACL
-          if (clip.aclTracks.transforms.numTracks > 0) {
-            const aclTransforms = { raw: clip.aclTracks.transforms }
+        // Compress our clip with ACL
+        if (clip.aclTracks.transforms.numTracks > 0) {
+          const aclTransforms = { raw: clip.aclTracks.transforms }
 
-            const compressedTracks = this._aclEncoder.compress(aclTransforms.raw)
-            compressedTracks.bind(this._aclDecoder)
+          const compressedTracks = this._aclEncoder.compress(aclTransforms.raw)
+          compressedTracks.bind(this._aclDecoder)
 
-            console.log(`ACL transform compressed size: ${compressedTracks.byteLength} bytes`)
+          console.log(`ACL transform compressed size: ${compressedTracks.byteLength} bytes`)
 
-            aclTransforms.compressed = compressedTracks
-            aclTransforms.decompressed = new DecompressedTracks(this._aclDecoder)
+          aclTransforms.compressed = compressedTracks
+          aclTransforms.decompressed = new DecompressedTracks(this._aclDecoder)
 
-            clip.aclTransforms = aclTransforms
-          }
+          clip.aclTransforms = aclTransforms
+        }
 
-          if (clip.aclTracks.weights.numTracks > 0) {
-            const aclWeights = { raw: clip.aclTracks.weights }
+        if (clip.aclTracks.weights.numTracks > 0) {
+          const aclWeights = { raw: clip.aclTracks.weights }
 
-            const compressedTracks = this._aclEncoder.compress(aclWeights.raw)
-            compressedTracks.bind(this._aclDecoder)
+          const compressedTracks = this._aclEncoder.compress(aclWeights.raw)
+          compressedTracks.bind(this._aclDecoder)
 
-            console.log(`ACL weights compressed size: ${compressedTracks.byteLength} bytes`)
+          console.log(`ACL weights compressed size: ${compressedTracks.byteLength} bytes`)
 
-            aclWeights.compressed = compressedTracks
-            aclWeights.decompressed = new DecompressedTracks(this._aclDecoder)
+          aclWeights.compressed = compressedTracks
+          aclWeights.decompressed = new DecompressedTracks(this._aclDecoder)
 
-            clip.aclWeights = aclWeights
-          }
+          clip.aclWeights = aclWeights
+        }
 
-          // Bind our clip to playback from ACL tracks
-          this.bindACLProxy(clip)
-        })
+        // Bind our clip to playback from ACL tracks
+        this.bindACLProxy(clip)
+      })
     })
 
     aclPromise.then(() => {
@@ -953,6 +978,11 @@ export class Viewer {
       console.timeEnd('playback')
       this.mixer.setTime(0.0)
     })
+  }
+
+  animationCompressionSettingChanged () {
+    // Our compression settings have changed, just reset our clips
+    this.setClips(this.clips)
   }
   // nfrechette - END
 
@@ -1203,8 +1233,14 @@ export class Viewer {
     this.animFolder.add({playAll: () => this.playAllClips()}, 'playAll');
 
     // nfrechette - BEGIN
-    const animSourceCtrl = this.animFolder.add(this.state, 'animSource', ['Source File', 'ACL Raw', 'ACL Compressed', 'ACL Compressed (per track)']);
-    animSourceCtrl.onChange(() => this.updateAnimationSource());
+    const animSourceCtrl = this.animFolder.add(this.state, 'animSource', ['Source File', 'ACL Raw', 'ACL Compressed', 'ACL Compressed (per track)'])
+    animSourceCtrl.onChange(() => this.updateAnimationSource())
+    const jointPrecisionCtrl = this.animFolder.add(this.state, 'jointPrecision')
+    jointPrecisionCtrl.onChange(() => this.animationCompressionSettingChanged())
+    const jointShellDistanceCtrl = this.animFolder.add(this.state, 'jointShellDistance')
+    jointShellDistanceCtrl.onChange(() => this.animationCompressionSettingChanged())
+    const blendWeightPrecisionCtrl = this.animFolder.add(this.state, 'blendWeightPrecision')
+    blendWeightPrecisionCtrl.onChange(() => this.animationCompressionSettingChanged())
     // nfrechette - END
 
     // Morph target controls.
