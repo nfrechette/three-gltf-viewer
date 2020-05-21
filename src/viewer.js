@@ -350,6 +350,8 @@ export class Viewer {
     this.mixer && this.mixer.update(dt);
     this.render();
 
+    this.updateACLStats() // nfrechette
+
     this.prevTime = time;
 
   }
@@ -686,6 +688,10 @@ export class Viewer {
     const qvvTracks = new TrackArray(numTracks, SampleTypes.QVV, numSamplesPerTrack, sampleRate);
     const weightTracks = new TrackArray(numBlendWeightTracks, SampleTypes.Float, numSamplesPerTrack, sampleRate);
 
+    // We'll track the glTF size
+    qvvTracks.gltfSize = 0
+    weightTracks.gltfSize = 0
+
     // TODO: Display this in the viewport?
     console.log(`num transform tracks: ${qvvTracks.numTracks}`)
     console.log(`num blend weight tracks: ${weightTracks.numTracks}`)
@@ -745,6 +751,16 @@ export class Viewer {
         const interpolant = prop.track.createInterpolant(null)
         interpolant.settings = interpolantSettings
         interpolant.resultBuffer = resultBuffer
+
+        // Track the glTF size
+        if (interpolant.parameterPositions) {
+          // Time value of each sample, as a Float32Array
+          qvvTracks.gltfSize += interpolant.parameterPositions.byteLength
+        }
+        if (interpolant.sampleValues) {
+          // Value of each sample, as a Float32Array (each sample can be multiple floats)
+          qvvTracks.gltfSize += interpolant.sampleValues.byteLength
+        }
 
         if (propertyName === 'quaternion') {
           for (let sampleIndex = 0; sampleIndex < numSamplesPerTrack; ++sampleIndex) {
@@ -817,6 +833,16 @@ export class Viewer {
       interpolant.settings = interpolantSettings
       interpolant.resultBuffer = resultBuffer
 
+      // Track the glTF size
+      if (interpolant.parameterPositions) {
+        // Time value of each sample, as a Float32Array
+        weightTracks.gltfSize += interpolant.parameterPositions.byteLength
+      }
+      if (interpolant.sampleValues) {
+        // Value of each sample, as a Float32Array
+        weightTracks.gltfSize += interpolant.sampleValues.byteLength
+      }
+
       for (let sampleIndex = 0; sampleIndex < numSamplesPerTrack; ++sampleIndex) {
         const sampleTime = Math.min(sampleIndex / sampleRate, duration)
         interpolant.evaluate(sampleTime)
@@ -882,6 +908,11 @@ export class Viewer {
         })
       })
     }
+
+    if (this.aclStats) {
+      this.aclStats.innerHTML = ''
+      this.prevClipStats = null
+    }
   }
 
   compressWithACL ( clips ) {
@@ -929,6 +960,12 @@ export class Viewer {
 
     aclPromise.then(() => {
       this.updateAnimationSource()
+
+      if (!this.aclStats) {
+        this.aclStats = document.createElement('div');
+        this.aclStats.classList.add('aclStats');
+        this.el.appendChild(this.aclStats);
+      }
     })
   }
 
@@ -983,6 +1020,51 @@ export class Viewer {
   animationCompressionSettingChanged () {
     // Our compression settings have changed, just reset our clips
     this.setClips(this.clips)
+  }
+
+  updateACLStats () {
+    if (!this.aclStats) return
+
+    const that = this
+    const playingClip = this.clips.find((clip) => that.state.actionStates[clip.name])
+    if (!playingClip) return
+    if (playingClip === this.prevClipStats) return
+    this.prevClipStats = playingClip
+
+    let statsText = ''
+    statsText = statsText.concat('Animation stats for clip ', playingClip.name, ':<br/>')
+    statsText = statsText.concat('<br/>')
+
+    if (playingClip.aclTransforms) {
+      const error = playingClip.aclTransforms.compressed.error
+      const compressedSize = playingClip.aclTransforms.compressed.byteLength
+      const compressedSizeKB = compressedSize / 1024
+      const rawSize = playingClip.aclTransforms.raw.getRawSize()
+      const rawSizeKB = rawSize / 1024
+      const gltfSize = playingClip.aclTransforms.raw.gltfSize
+      const gltfSizeKB = gltfSize / 1024
+      statsText = statsText.concat('Joint error: ', error.error.toFixed(4), '<br/>')
+      statsText = statsText.concat('Joint raw size: ', rawSizeKB.toFixed(2), ' KB<br/>')
+      statsText = statsText.concat('Joint glTF size: ', gltfSizeKB.toFixed(2), ' KB<br/>')
+      statsText = statsText.concat('Joint compressed size: ', compressedSizeKB.toFixed(2), ' KB<br/>')
+      statsText = statsText.concat('<br/>')
+    }
+
+    if (playingClip.aclWeights) {
+      const error = playingClip.aclWeights.compressed.error
+      const compressedSize = playingClip.aclWeights.compressed.byteLength
+      const compressedSizeKB = compressedSize / 1024
+      const rawSize = playingClip.aclWeights.raw.getRawSize()
+      const rawSizeKB = rawSize / 1024
+      const gltfSize = playingClip.aclWeights.raw.gltfSize
+      const gltfSizeKB = gltfSize / 1024
+      statsText = statsText.concat('Blend weight error: ', error.error.toFixed(4), '<br/>')
+      statsText = statsText.concat('Blend weight raw size: ', rawSizeKB.toFixed(2), ' KB<br/>')
+      statsText = statsText.concat('Blend weight glTF size: ', gltfSizeKB.toFixed(2), ' KB<br/>')
+      statsText = statsText.concat('Blend weight compressed size: ', compressedSizeKB.toFixed(2), ' KB<br/>')
+    }
+
+    this.aclStats.innerHTML = statsText
   }
   // nfrechette - END
 
