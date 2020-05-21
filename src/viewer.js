@@ -701,10 +701,10 @@ export class Viewer {
       const qvvTrack = qvvTracks.at(trackIndex)
 
       // Setup our description
+      qvvTrack.description.precision = this.state.jointPrecision
+      qvvTrack.description.shellDistance = this.state.jointShellDistance
       if (node.parent) {
         qvvTrack.description.parentIndex = nodeUUIDs.indexOf(node.parent.uuid)
-        qvvTrack.description.precision = this.state.jointPrecision
-        qvvTrack.description.shellDistance = this.state.jointShellDistance
       }
 
       const qvv = QVV.identity
