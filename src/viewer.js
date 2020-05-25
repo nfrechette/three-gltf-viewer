@@ -46,7 +46,7 @@ import { environments } from '../assets/environment/index.js';
 import { createBackground } from '../lib/three-vignette.js';
 
 // nfrechette - BEGIN
-import { TrackArray, SampleTypes, QVV, RoundingPolicy, Encoder } from '@nfrechette/acl';
+import { TrackArray, SampleType, QVV, RoundingPolicy, Encoder } from '@nfrechette/acl';
 import { DecompressedTracks, Decoder } from '@nfrechette/acl';
 // nfrechette - END
 
@@ -685,8 +685,8 @@ export class Viewer {
     const sampleRate = this.findClipSampleRate(clip, duration)
     const numSamplesPerTrack = this.calcNumSamples(duration, sampleRate)
 
-    const qvvTracks = new TrackArray(numTracks, SampleTypes.QVV, numSamplesPerTrack, sampleRate);
-    const weightTracks = new TrackArray(numBlendWeightTracks, SampleTypes.Float, numSamplesPerTrack, sampleRate);
+    const qvvTracks = new TrackArray(numTracks, SampleType.QVV, numSamplesPerTrack, sampleRate);
+    const weightTracks = new TrackArray(numBlendWeightTracks, SampleType.Float, numSamplesPerTrack, sampleRate);
 
     // We'll track the glTF size
     qvvTracks.gltfSize = 0
